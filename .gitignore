@@ -1,0 +1,30 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Exploit output (may contain target credentials)
+Result/
+*.log
+
+# Local overrides
+config.local.json
+
+# Tooling
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local target lists (may contain real customer domains)
+targets.txt
+1.txt
+

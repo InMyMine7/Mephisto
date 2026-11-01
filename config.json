@@ -1,7 +1,7 @@
 {
     "TIMEOUT": 10,
     "UPLOAD_TIMEOUT": 15,
-    "FILES_DIR": "lib",
+    "FILES_DIR": "assets/payloads",
     "REQUIRED_FILES": [
         "inmymine-shell.jpg",
         "mem.zip"
@@ -11,6 +11,8 @@
     "PASSWORDS_FILE": "password_change.txt",
     "ADMINS_FILE": "wp-admin.txt",
     "REGISTER_FILE": "wp-register.txt",
+    "PROXIES": [],
+    "DISABLED_EXPLOITS": [],
     "UPDATE_URL": "https://raw.githubusercontent.com/InMyMine7/InMyMine7/main/up.txt",
     "SUPPORT_URL": [
         "https://buymeacoffee.com/inmymine72"

@@ -65,8 +65,8 @@ Instead:
 1. **Fork** the repository
 2. **Clone** your fork:
 ```bash
-git clone https://github.com/YOUR-USERNAME/InMyMine7.git
-cd ExWP
+git clone https://github.com/YOUR-USERNAME/Mephisto.git
+cd Mephisto
 ```
 
 3. **Create a virtual environment:**
@@ -124,78 +124,87 @@ def check_file(self, filename):
 
 ### Adding New Exploits
 
+Full contract and rationale: [docs/ADDING_CVE.md](../docs/ADDING_CVE.md).
+
 #### File Structure
 ```
-lib/tools/exploit_CVE_XXXX_XXXX.py
+exploits/cve_<year>_<number>.py
 ```
+
+The filename determines the CVE id (`cve_2026_0920.py` → `CVE-2026-0920`).
+Modules are discovered automatically — there is no registry to edit.
 
 #### Template
-```python
-"""
-Exploit for CVE-XXXX-XXXX
-Description: Brief description of the vulnerability
-"""
+Start from [`exploits/_template.py`](../exploits/_template.py). The entry point
+takes the single `Exploit` instance and must not escape with an exception:
 
-def exploit_cve_xxxx_xxxx(url, session, headers, proxies, config):
-    """
-    Exploit the vulnerability.
-    
-    Args:
-        url (str): Target URL
-        session (requests.Session): HTTP session
-        headers (dict): HTTP headers
-        proxies (dict): Proxy configuration
-        config (dict): Configuration dictionary
-        
-    Returns:
-        dict: Results containing success status and data
-    """
+```python
+"""CVE-XXXX-NNNN - Vulnerability type (component)."""
+
+import requests
+from colorama import Fore
+
+META = {
+    "type": "Arbitrary File Upload",
+    "component": "example-plugin",
+    "references": ["https://nvd.nist.gov/vuln/detail/CVE-XXXX-NNNN"],
+}
+
+
+def exploit_cve_xxxx_nnnn(exploit_instance):
     try:
-        # Implementation here
-        return {
-            'success': True,
-            'message': 'Exploitation successful',
-            'data': results
-        }
-    except Exception as e:
-        return {
-            'success': False,
-            'message': f'Error: {str(e)}',
-            'data': None
-        }
+        response = exploit_instance.session.post(
+            f"{exploit_instance.url}wp-admin/admin-ajax.php",
+            data={"action": "example_action"},
+            headers=exploit_instance.headers,
+            proxies=exploit_instance.proxy,
+            verify=False,
+            timeout=exploit_instance.CONFIG["TIMEOUT"],
+        )
+
+        if response.status_code == 200 and "expected-marker" in response.text:
+            exploit_instance.log_message(f"{Fore.GREEN}[CVE-XXXX-NNNN] [VULN]{Fore.RESET}", success=True)
+            exploit_instance.record("shell", f"{exploit_instance.url}uploaded.php")
+        else:
+            exploit_instance.log_message(f"{Fore.RED}[CVE-XXXX-NNNN] [NO]{Fore.RESET}")
+    except requests.RequestException as exc:
+        exploit_instance.log_message(f"[CVE-XXXX-NNNN Error: {exc}]", error=True)
 ```
+
+#### Recording Findings
+Use `exploit_instance.record(kind, value)`; the engine compares result-file line
+counts to decide whether the target is vulnerable.
+
+| kind | Destination (`config.json` key) |
+|---|---|
+| `shell` | `SHELLS_FILE` |
+| `admin` | `ADMINS_FILE` |
+| `password` | `PASSWORDS_FILE` |
+| `register` | `REGISTER_FILE` |
+
+Do not open result files directly — `record` owns the layout.
 
 #### Registration
-Add your exploit to `production.py`:
-```python
-EXPLOITS = {
-    # ... existing exploits ...
-    'CVE_XXXX_XXXX': 'lib.tools.exploit_cve_xxxx_xxxx.exploit_cve_xxxx_xxxx',
-}
-```
+None. `mephisto.registry.discover()` imports every `exploits/cve_*.py` on start.
+If a module exports several `exploit_*` functions, set `EXPLOIT_ENTRY` to name
+the right one.
 
 ### Testing Your Changes
 
-1. **Manual Testing:**
+1. **Self-checks (no network needed):**
 ```bash
-python production.py
+python -m unittest discover -s tests -t .
 ```
 
-2. **Test on Different Platforms:**
+2. **Compile check:**
+```bash
+python -m compileall -q mephisto exploits main.py
+```
+
+3. **Test on different platforms:**
    - Windows
    - Linux (Ubuntu, Fedora, Arch)
    - macOS
-
-3. **Test with Different Python Versions:**
-   - Python 3.8
-   - Python 3.9
-   - Python 3.10+
-
-4. **Code Quality:**
-```bash
-# Check for common issues
-python -m py_compile production.py lib/tools/*.py
-```
 
 ### Submitting Changes
 

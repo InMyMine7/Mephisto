@@ -115,6 +115,7 @@ The tool currently exploits the following CVEs:
   - `urllib3` - HTTP client with connection pooling
   - `beautifulsoup4` - HTML/XML parsing
   - `colorama` - Cross-platform colored terminal output
+  - `pycryptodome` - AES payload encryption (CVE-2026-1357)
 
 ## 🚀 Quick Start
 
@@ -126,9 +127,9 @@ cd Mephisto
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Prepare payload files
-mkdir -p lib
-# Add inmymine-shell.jpg and mem.zip to lib/
+# 3. Verify payload files are present
+ls assets/payloads
+# inmymine-shell.jpg and mem.zip ship with the repository
 
 # 4. Run the tool
 python main.py
@@ -185,8 +186,8 @@ pip install -r requirements.txt
 
 #### Step 5: Prepare Payload Files
 ```bash
-mkdir lib
-# Copy inmymine-shell.jpg and mem.zip to the lib\ folder
+ls assets/payloads
+# inmymine-shell.jpg and mem.zip ship with the repository
 ```
 
 #### Step 6: Run the Tool
@@ -257,8 +258,7 @@ pip install -r requirements.txt
 
 #### Step 7: Prepare Payload Files
 ```bash
-mkdir -p lib
-# Copy inmymine-shell.jpg and mem.zip to lib/ folder
+# Payloads ship in assets/payloads/ - no copy needed
 chmod +x main.py  # Make script executable
 ```
 
@@ -307,8 +307,7 @@ pip install -r requirements.txt
 
 #### Step 7: Prepare Payload Files
 ```bash
-mkdir -p lib
-# Copy inmymine-shell.jpg and mem.zip to lib/ folder
+# Payloads ship in assets/payloads/ - no copy needed
 chmod +x main.py
 ```
 
@@ -353,7 +352,7 @@ docker run -it -v $(pwd)/Result:/app/Result inmymine7
 | **"Permission denied" on Linux** | Run `chmod +x main.py` |
 | **"pip: command not found"** | Use `pip3` instead of `pip` |
 | **Module import errors** | Run `pip install -r requirements.txt --force-reinstall` |
-| **No module named 'lib'** | Make sure you're in the Mephisto directory |
+| **No module named 'mephisto'** | Make sure you're in the Mephisto directory (the one containing `main.py`) |
 
 ---
 
@@ -369,13 +368,13 @@ pip install -r requirements.txt
 ```
 
 ### 3. Prepare Required Files
-Create the `lib/` directory with the necessary payload files:
+Payload files live in `assets/payloads/` and ship with the repository:
 ```bash
-mkdir -p lib
-# Place inmymine-shell.jpg and mem.zip in the lib directory
+ls assets/payloads
+# inmymine-shell.jpg  mem.zip
 ```
 
-These files are required for exploitation and should be placed in the `lib/` directory before running the tool.
+If a file is missing, drop it into `assets/payloads/` before running the tool.
 
 ## ⚙️ Configuration
 
@@ -385,7 +384,7 @@ Edit `config.json` to customize the tool's behavior:
 {
     "TIMEOUT": 10,                          // Request timeout in seconds
     "UPLOAD_TIMEOUT": 15,                   // File upload timeout
-    "FILES_DIR": "lib",                     // Directory containing payloads
+    "FILES_DIR": "assets/payloads",         // Directory containing payloads
     "REQUIRED_FILES": [                     // Files required for exploitation
         "inmymine-shell.jpg",
         "mem.zip"
@@ -395,11 +394,16 @@ Edit `config.json` to customize the tool's behavior:
     "PASSWORDS_FILE": "password_change.txt", // Log file for changed passwords
     "ADMINS_FILE": "wp-admin.txt",          // Log file for admin accounts
     "REGISTER_FILE": "wp-register.txt",     // Log file for registrations
+    "PROXIES": [],                          // Optional outbound proxy list
+    "DISABLED_EXPLOITS": [],                // CVE ids to skip during discovery
     "UPDATE_URL": "https://...",            // URL for version updates
     "SUPPORT_URL": ["https://..."],         // Support/donation links
     "EMAIL": "default@example.com"          // Default email for operations
 }
 ```
+
+Paths are resolved against the project root, so the tool runs correctly no
+matter which directory you launch it from.
 
 ## 💻 Usage
 
@@ -410,28 +414,52 @@ python main.py
 
 ### Main Menu Options
 
+```
+  [1] Start exploit        single target or a target list
+  [2] List exploits        22 CVE modules registered
+  [3] Support developer    keep the project alive
+  [0] Exit
+```
+
 #### 🎯 Option 1: Start Exploit
-Choose between single target or mass scanning:
 
-**Single Target Scan:**
-```
-[~] Masukkan target URL: https://target-wordpress.com
-[~] Enter number of threads (default 10): 5
-```
+Pick `[1]` for a single target or `[2]` for a target list file, then answer:
 
-**Mass Target Scan:**
 ```
-[~] ENTER YOUR LIST: targets.txt
-[~] Enter number of threads (default 10): 20
+→ target url https://target-wordpress.com
+→ per-exploit deadline in seconds (blank = none)
 ```
 
-The tool will run all 22+ exploits against the target(s) and log successful results.
+Mass scans also ask for a thread count. Each exploit is drawn as it finishes:
 
-#### ✅ Option 2: Check All Exploits
-Reviews the available exploits and their status without executing them.
+```
+  → http://target/  22 exploits
+  ────────────────────────────────────────────────
+   1/22  CVE-2021-25094    VULN      █░░░░░░░░░░░   0.61s
+   2/22  CVE-2023-5360     clean     ██░░░░░░░░░░   0.78s
+  ...
+  ────────────────────────────────────────────────
+```
+
+followed by a verdict table, a findings table and the path to the result files.
+
+#### ✅ Option 2: List Exploits
+Shows every registered CVE with its type and affected component.
 
 #### 💰 Option 3: Support Developer
 Displays links for supporting the development of this tool.
+
+### 🖥️ Terminal Behaviour
+
+| Flag / variable | Effect |
+|---|---|
+| `python main.py <url\|list> [more…]` | Headless scan without menus; prints the same summary |
+| `python main.py -v` / `--verbose` | Show each exploit's per-request log lines |
+| `MEPHISTO_ASCII=1` | Force plain-ASCII borders (older Windows consoles) |
+
+The UI switches the Windows console to UTF-8 on start when box drawing is
+available and falls back to ASCII automatically when it is not. `Ctrl+C` during
+a scan returns to the menu instead of closing the tool.
 
 ### 📋 Input File Format (Mass Scanning)
 
@@ -442,7 +470,8 @@ https://wordpress-site2.com
 https://wordpress-site3.com
 ```
 
-Then run the tool and select option 1 for mass scanning, providing the file path when prompted.
+Lines starting with `#` are ignored. Then run the tool and select option 1 for
+mass scanning, providing the file path when prompted.
 
 ## 📊 Output
 
@@ -483,51 +512,99 @@ All operations are logged with color-coded output:
 
 ```
 Mephisto/
-├── main.py           # Main exploit orchestrator
-├── config.json            # Configuration file
-├── requirements.txt       # Python dependencies
-├── README.md              # This file
-├── lib/
-│   ├── tools/
-│   │   ├── exploit_cve_2021_25094.py
-│   │   ├── exploit_cve_2023_5360.py
-│   │   ├── exploit_cve_2024_2667.py
-│   │   ├── ... (22+ exploit modules)
-│   ├── inmymine-shell.jpg (required)
-│   └── mem.zip           (required)
-└── Result/               # Output directory
+├── main.py                  # Entry point (delegates to mephisto.cli)
+├── config.json              # Runtime configuration
+├── requirements.txt         # Python dependencies
+├── README.md                # This file
+│
+├── mephisto/                # Core package
+│   ├── __init__.py          # Public exports
+│   ├── cli.py               # Menus, prompts, scan flow, headless mode
+│   ├── ui.py                # Banner, tables, panels, progress bars
+│   ├── engine.py            # Target runner, per-exploit isolation & verdicts
+│   ├── client.py            # Exploit instance handed to every module
+│   ├── config.py            # config.json loading and path resolution
+│   ├── registry.py          # Auto-discovers exploits/cve_*.py
+│   └── results.py           # Result file tracking (artifact detection)
+│
+├── exploits/                # One file per CVE - auto-discovered
+│   ├── __init__.py
+│   ├── _template.py         # Copy this to add a new CVE
+│   ├── cve_2021_25094.py
+│   ├── cve_2023_5360.py
+│   └── ... (22 modules)
+│
+├── assets/
+│   └── payloads/            # Upload payloads
+│       ├── inmymine-shell.jpg
+│       └── mem.zip
+│
+├── tests/
+│   └── test_core.py         # Registry, client, engine, UI, config self-checks
+│
+├── docs/
+│   └── ADDING_CVE.md        # How to add a CVE module
+│
+└── Result/                  # Output directory (created at runtime)
     ├── Shells.txt
     ├── password_change.txt
     ├── wp-admin.txt
     └── wp-register.txt
 ```
 
+### How an exploit runs
+
+1. `mephisto.registry.discover()` imports every `exploits/cve_*.py` and reads its
+   entry point, so there is no central list to keep in sync.
+2. `mephisto.engine.run_target()` builds one `Exploit` instance per target and
+   calls each module in turn.
+3. A module records findings with `exploit_instance.record(kind, value)`.
+4. The engine compares result-file line counts before and after each module, so
+   a target is marked `VULN` only when something was actually recorded.
+5. A module that raises is logged as an error and the scan continues.
+
 ## 🔧 Advanced Usage
 
 ### 🔗 Using with Proxies
 
-To add proxy support, modify the `PROXIES` list in `main.py`:
+Add proxies to `config.json`:
 
-```python
-PROXIES = [
-    'http://proxy1.com:8080',
-    'http://proxy2.com:8080',
-    'http://proxy3.com:8080',
-]
+```json
+{
+    "PROXIES": [
+        "http://proxy1.com:8080",
+        "http://proxy2.com:8080",
+        "http://proxy3.com:8080"
+    ]
+}
 ```
 
-The tool will randomly select from available proxies for each request, improving anonymity.
+The tool randomly selects from the list for each target, improving anonymity.
 
 ### 🛠️ Customizing Exploits
 
-Each exploit module in `lib/tools/` can be modified or new exploits added by following the existing pattern and registering them in the `EXPLOITS` dictionary in `main.py`:
+Drop a new module into `exploits/` — it is picked up automatically on the next
+run:
 
-```python
-EXPLOITS = {
-    'CVE_XXXX_XXXX': 'lib.tools.exploit_cve_xxxx_xxxx.exploit_function',
-    # Add your custom exploits here
-}
+```bash
+cp exploits/_template.py exploits/cve_2026_4444.py
+$EDITOR exploits/cve_2026_4444.py
+python -m unittest discover -s tests -t .   # verify discovery + entry point
 ```
+
+See [docs/ADDING_CVE.md](docs/ADDING_CVE.md) for the module contract, metadata
+fields and result-recording rules. To skip a module without deleting it, list
+its CVE id in `DISABLED_EXPLOITS`.
+
+### ✅ Running the Self-Checks
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+The suite covers module discovery, URL normalisation, request helpers, result
+recording, per-exploit verdicts and config path resolution. It needs no network
+access and no target.
 
 ### ⚡ Rate Limiting
 
@@ -547,7 +624,7 @@ Adjust the threading/pooling count to control request rate:
 
 ### ❌ "File not found" Error
 **Problem:** Tool complains about missing files  
-**Solution:** Ensure `inmymine-shell.jpg` and `mem.zip` are in the `lib/` directory.
+**Solution:** Ensure `inmymine-shell.jpg` and `mem.zip` are in `assets/payloads/`.
 
 ### ⏱️ Connection Timeout
 **Problem:** Requests are timing out  
@@ -587,7 +664,7 @@ A: Use proxies, adjust thread count, and enable anti-detection features. See [An
 A: Check if the WordPress version is vulnerable, ensure required files are present, and verify network connectivity.
 
 **Q: Can I add new CVEs?**  
-A: Yes! Create a new exploit module in `lib/tools/` and register it in the `EXPLOITS` dictionary.
+A: Yes. Copy `exploits/_template.py` to `exploits/cve_<year>_<number>.py`, implement the entry point, and record findings with `exploit_instance.record(...)`. Discovery is automatic - there is no registry to edit. See [docs/ADDING_CVE.md](docs/ADDING_CVE.md).
 
 **Q: What's the difference between single and mass scanning?**  
 A: Single mode tests one target, mass mode processes multiple targets from a file using thread pools.
@@ -604,6 +681,7 @@ A: Single mode tests one target, mass mode processes multiple targets from a fil
 | Version | Date | Changes |
 |---------|------|---------|
 | **v0.1** | 2026-05-01 | Initial release with 22+ WordPress CVE exploits |
+| **v0.2** | 2026-11-01 | Restructured into a package: auto-discovered `exploits/`, per-exploit isolation and verdicts, config-driven proxies/disabled list, self-check suite |
 
 ## 📞 Contact & Support
 
@@ -621,10 +699,10 @@ A: Single mode tests one target, mass mode processes multiple targets from a fil
 Contributions are welcome! To add new exploits or improve existing ones:
 
 1. **Fork** the repository
-2. **Create** a new exploit module in `lib/tools/`
-3. **Follow** the naming convention: `exploit_CVE_XXXX_XXXX.py`
-4. **Register** the exploit in the `EXPLOITS` dictionary in `main.py`
-5. **Test** thoroughly before submitting a pull request
+2. **Create** a new module in `exploits/`
+3. **Follow** the naming convention: `cve_<year>_<number>.py` (drives the CVE id)
+4. **Run** the self-checks: `python -m unittest discover -s tests -t .`
+5. **Test** the module against a lab target you control
 6. **Submit** your PR with a clear description
 
 ### Contribution Guidelines
