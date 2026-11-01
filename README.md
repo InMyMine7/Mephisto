@@ -396,7 +396,9 @@ Edit `config.json` to customize the tool's behavior:
     "REGISTER_FILE": "wp-register.txt",     // Log file for registrations
     "PROXIES": [],                          // Optional outbound proxy list
     "DISABLED_EXPLOITS": [],                // CVE ids to skip during discovery
-    "UPDATE_URL": "https://...",            // URL for version updates
+    "UPDATE_REPO": "InMyMine7/Mephisto",    // GitHub repo to check for updates
+    "UPDATE_CHECK": true,                   // false disables the startup check
+    "SKIPPED_VERSION": "",                  // Version you asked not to be reminded about
     "SUPPORT_URL": ["https://..."],         // Support/donation links
     "EMAIL": "default@example.com"          // Default email for operations
 }
@@ -417,7 +419,8 @@ python main.py
 ```
   [1] Start exploit        single target or a target list
   [2] List exploits        22 CVE modules registered
-  [3] Support developer    keep the project alive
+  [3] Check for updates    version v0.2 - up to date
+  [4] Support developer    keep the project alive
   [0] Exit
 ```
 
@@ -446,7 +449,42 @@ followed by a verdict table, a findings table and the path to the result files.
 #### ✅ Option 2: List Exploits
 Shows every registered CVE with its type and affected component.
 
-#### 💰 Option 3: Support Developer
+#### 🔄 Option 3: Check for Updates
+Reads the newest version straight from
+[github.com/InMyMine7/Mephisto](https://github.com/InMyMine7/Mephisto) and lets
+you decide:
+
+```
+── UPDATE AVAILABLE  V0.2 → V0.3 ─────────────────────────────
+  current · v0.2
+  latest  · v0.3  (release)
+  source  · https://github.com/InMyMine7/Mephisto/releases/tag/v0.3
+  · Version 0.3.0
+  · Two new CVE modules
+  · Faster mass scanning
+
+  [1] update now
+  [2] stay on v0.2
+  [3] skip v0.3 - do not remind me again
+
+  → choice [2]
+```
+
+When a newer release exists, a `! update available …` line also appears under
+the banner at startup, and the menu shows `version v0.2 - v0.3 available`.
+
+| Choice | Effect |
+|---|---|
+| **update now** | `git pull --ff-only` in a git checkout, otherwise downloads the release archive. `config.json` and `Result/` are never overwritten |
+| **stay** | Keeps the running version; you are asked again next launch |
+| **skip** | Stores the version in `SKIPPED_VERSION`; a strictly newer release still notifies |
+
+Version discovery tries the GitHub release, then the newest semver tag, then the
+`VERSION` constant on the default branch — so it keeps working before the first
+tagged release exists. Set `"UPDATE_CHECK": false` to disable the check, or
+point `"UPDATE_REPO"` at a fork.
+
+#### 💰 Option 4: Support Developer
 Displays links for supporting the development of this tool.
 
 ### 🖥️ Terminal Behaviour
@@ -525,7 +563,8 @@ Mephisto/
 │   ├── client.py            # Exploit instance handed to every module
 │   ├── config.py            # config.json loading and path resolution
 │   ├── registry.py          # Auto-discovers exploits/cve_*.py
-│   └── results.py           # Result file tracking (artifact detection)
+│   ├── results.py           # Result file tracking (artifact detection)
+│   └── updater.py           # GitHub version check and self-update
 │
 ├── exploits/                # One file per CVE - auto-discovered
 │   ├── __init__.py
@@ -681,7 +720,7 @@ A: Single mode tests one target, mass mode processes multiple targets from a fil
 | Version | Date | Changes |
 |---------|------|---------|
 | **v0.1** | 2026-05-01 | Initial release with 22+ WordPress CVE exploits |
-| **v0.2** | 2026-11-01 | Restructured into a package: auto-discovered `exploits/`, per-exploit isolation and verdicts, config-driven proxies/disabled list, self-check suite |
+| **v0.2** | 2026-11-01 | Restructured into a package: auto-discovered `exploits/`, per-exploit isolation and verdicts, config-driven proxies/disabled list, self-check suite, redesigned terminal UI, and an in-app updater that reads releases directly from GitHub |
 
 ## 📞 Contact & Support
 

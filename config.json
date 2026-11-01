@@ -13,7 +13,9 @@
     "REGISTER_FILE": "wp-register.txt",
     "PROXIES": [],
     "DISABLED_EXPLOITS": [],
-    "UPDATE_URL": "https://raw.githubusercontent.com/InMyMine7/InMyMine7/main/up.txt",
+    "UPDATE_REPO": "InMyMine7/Mephisto",
+    "UPDATE_CHECK": true,
+    "SKIPPED_VERSION": "0.1",
     "SUPPORT_URL": [
         "https://buymeacoffee.com/inmymine72"
     ],

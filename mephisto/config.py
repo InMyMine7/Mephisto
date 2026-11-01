@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_FILE = ROOT_DIR / "config.json"
 
-VERSION = "0.1"
+VERSION = "0.2"
 
 # Keys that must always be absolute after load.
 _PATH_KEYS = ("FILES_DIR", "RESULT_DIR")
@@ -32,7 +32,9 @@ DEFAULT_CONFIG = {
     "REGISTER_FILE": "wp-register.txt",
     "PROXIES": [],
     "DISABLED_EXPLOITS": [],
-    "UPDATE_URL": "https://raw.githubusercontent.com/InMyMine7/InMyMine7/main/up.txt",
+    "UPDATE_REPO": "InMyMine7/Mephisto",
+    "UPDATE_CHECK": True,
+    "SKIPPED_VERSION": "",
     "SUPPORT_URL": ["https://buymeacoffee.com/inmymine72"],
     "EMAIL": "default@example.com",
 }
@@ -89,7 +91,7 @@ def load() -> Config:
 
 def save(config: Config) -> None:
     """Persist configuration, storing path keys in their portable relative form."""
-    data = dict(config)
+    data = {key: value for key, value in config.items() if not str(key).startswith("_")}
     for key in _PATH_KEYS:
         path = Path(data[key])
         if path.is_absolute():

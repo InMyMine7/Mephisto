@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import requests
 
 from mephisto import config as config_module
-from mephisto import ui
+from mephisto import ui, updater
 from mephisto.client import Exploit
 from mephisto.engine import ERROR, SUCCESS, TIMEOUT, run_target, run_targets
 from mephisto.registry import ExploitSpec, _cve_from_filename, discover, load_function
@@ -309,6 +310,130 @@ class RenderTests(unittest.TestCase):
         finally:
             ui.set_verbose(False)
             tmpdir.cleanup()
+
+
+class UpdaterTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.config = make_config(self.tmpdir.name)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_version_parsing_handles_prefixes_and_junk(self):
+        self.assertEqual(updater.parse_version("v0.2.1"), (0, 2, 1))
+        self.assertEqual(updater.parse_version("0.1"), (0, 1))
+        self.assertEqual(updater.parse_version("release-1.2.3"), (1, 2, 3))
+        self.assertEqual(updater.parse_version(""), ())
+        self.assertEqual(updater.parse_version(None), ())
+
+    def test_newer_comparison_pads_missing_segments(self):
+        self.assertTrue(updater.is_newer("0.2", "0.1"))
+        self.assertTrue(updater.is_newer("0.1.1", "0.1"))
+        self.assertTrue(updater.is_newer("1.0", "0.9.9"))
+        self.assertFalse(updater.is_newer("0.1", "0.1"))
+        self.assertFalse(updater.is_newer("0.1", "0.1.0"))
+        self.assertFalse(updater.is_newer("0.1", "0.2"))
+        self.assertFalse(updater.is_newer("junk", "0.1"))
+
+    def test_repo_defaults_to_the_project_repository(self):
+        self.assertEqual(updater.repo_of({}), "InMyMine7/Mephisto")
+        self.assertEqual(updater.repo_of({"UPDATE_REPO": "owner/repo/"}), "owner/repo")
+
+    def test_available_ignores_equal_or_older_remote(self):
+        same = updater.ReleaseInfo(version="0.1", tag="v0.1", url="u", source="release")
+        with mock.patch.object(updater, "latest", return_value=same):
+            self.assertIsNone(updater.available(self.config, local_version="0.1"))
+        newer = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+        with mock.patch.object(updater, "latest", return_value=newer):
+            self.assertIs(updater.available(self.config, local_version="0.1"), newer)
+
+    def test_latest_prefers_the_highest_candidate(self):
+        release = updater.ReleaseInfo(version="0.1", tag="v0.1", url="u", source="release")
+        tag = updater.ReleaseInfo(version="0.3", tag="v0.3", url="u", source="tag")
+        source = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="source")
+        with mock.patch.object(updater, "_from_release", return_value=release), \
+             mock.patch.object(updater, "_from_tags", return_value=tag), \
+             mock.patch.object(updater, "_from_source", return_value=source):
+            self.assertEqual(updater.latest(self.config).version, "0.3")
+
+    def test_latest_returns_none_when_github_is_unreachable(self):
+        with mock.patch.object(updater, "_from_release", return_value=None), \
+             mock.patch.object(updater, "_from_tags", return_value=None), \
+             mock.patch.object(updater, "_from_source", return_value=None):
+            self.assertIsNone(updater.latest(self.config))
+
+    def test_skipping_a_version_silences_only_that_version(self):
+        info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+        self.assertTrue(updater.should_notify(self.config, None) is False)
+        self.assertTrue(updater.should_notify(self.config, info))
+
+        self.config["SKIPPED_VERSION"] = "0.2"
+        self.assertFalse(updater.should_notify(self.config, info))
+
+        later = updater.ReleaseInfo(version="0.3", tag="v0.3", url="u", source="release")
+        self.assertTrue(updater.should_notify(self.config, later))
+
+    def test_skip_preference_persists_through_config_save(self):
+        info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+        path = os.path.join(self.tmpdir.name, "config.json")
+        with mock.patch.object(config_module, "CONFIG_FILE", __import__("pathlib").Path(path)):
+            updater.skip_version(self.config, info.version)
+            reloaded = config_module.load()
+        self.assertEqual(reloaded["SKIPPED_VERSION"], "0.2")
+
+    def test_private_session_keys_never_reach_config_json(self):
+        path = os.path.join(self.tmpdir.name, "config.json")
+        self.config["_latest"] = "transient"
+        with mock.patch.object(config_module, "CONFIG_FILE", __import__("pathlib").Path(path)):
+            config_module.save(self.config)
+            reloaded = config_module.load()
+        self.assertNotIn("_latest", reloaded)
+
+    def test_safe_extract_rejects_paths_outside_the_target(self):
+        bundle = os.path.join(self.tmpdir.name, "evil.zip")
+        with zipfile.ZipFile(bundle, "w") as archive:
+            archive.writestr("../escaped.txt", "nope")
+        with self.assertRaises(ValueError):
+            updater._safe_extract(__import__("pathlib").Path(bundle), __import__("pathlib").Path(self.tmpdir.name) / "out")
+
+    def test_archive_update_preserves_config_and_results(self):
+        root = __import__("pathlib").Path(self.tmpdir.name) / "install"
+        (root / "mephisto").mkdir(parents=True)
+        (root / "mephisto" / "config.py").write_text('VERSION = "0.1"\n', encoding="utf-8")
+        (root / "config.json").write_text('{"EMAIL": "keep@me"}\n', encoding="utf-8")
+        (root / "Result").mkdir()
+        (root / "Result" / "Shells.txt").write_text("mine\n", encoding="utf-8")
+
+        staging = __import__("pathlib").Path(self.tmpdir.name) / "stage" / "Mephisto-0.2"
+        (staging / "mephisto").mkdir(parents=True)
+        (staging / "mephisto" / "config.py").write_text('VERSION = "0.2"\n', encoding="utf-8")
+        (staging / "config.json").write_text('{"EMAIL": "remote"}\n', encoding="utf-8")
+        (staging / "Result").mkdir()
+        (staging / "Result" / "Shells.txt").write_text("junk\n", encoding="utf-8")
+        (staging / "newfile.txt").write_text("hi\n", encoding="utf-8")
+
+        bundle = os.path.join(self.tmpdir.name, "release.zip")
+        with zipfile.ZipFile(bundle, "w") as archive:
+            base = staging.parent
+            for item in sorted(base.rglob("*")):
+                if item.is_file():
+                    archive.write(item, item.relative_to(base).as_posix())
+
+        class FakeResponse:
+            status_code = 200
+            content = open(bundle, "rb").read()
+
+        info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+        with mock.patch.object(config_module, "ROOT_DIR", root), \
+             mock.patch.object(updater, "_get", return_value=FakeResponse()):
+            ok, message = updater.update(self.config, info)
+
+        self.assertTrue(ok, message)
+        self.assertEqual((root / "mephisto" / "config.py").read_text().strip(), 'VERSION = "0.2"')
+        self.assertTrue((root / "newfile.txt").exists())
+        self.assertEqual((root / "config.json").read_text().strip(), '{"EMAIL": "keep@me"}')
+        self.assertEqual((root / "Result" / "Shells.txt").read_text().strip(), "mine")
 
 
 class ConfigTests(unittest.TestCase):

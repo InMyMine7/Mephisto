@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 
@@ -10,7 +11,7 @@ import requests
 from colorama import Fore, Style, init
 
 from . import config as config_module
-from . import ui
+from . import ui, updater
 from .engine import ERROR, SUCCESS, TIMEOUT, Listener, run_target, run_targets
 from .registry import discover
 from .results import ResultStore
@@ -94,7 +95,8 @@ def print_menu(config, specs):
     rows = [
         ("1", "Start exploit", "single target or a target list"),
         ("2", "List exploits", f"{len(specs)} CVE modules registered"),
-        ("3", "Support developer", "keep the project alive"),
+        ("3", "Check for updates", "version " + _version_hint(config)),
+        ("4", "Support developer", "keep the project alive"),
         ("0", "Exit", ""),
     ]
     print()
@@ -102,6 +104,13 @@ def print_menu(config, specs):
         number = ui.paint(f"[{key}]", ui.ACCENT)
         print(f"  {number} {ui.paint(label.ljust(20), ui.MUTED)} {ui.paint(hint, ui.FAINT)}")
     print()
+
+
+def _version_hint(config):
+    info = pending_update(config)
+    if info:
+        return "v" + config_module.VERSION + " - " + info.label + " available"
+    return "v" + config_module.VERSION + " - up to date"
 
 
 def list_exploits(specs):
@@ -135,33 +144,107 @@ def support_developer(config):
     ui.notice("github.com/InMyMine7  ·  t.me/InMyMineee", "info")
 
 
-def check_updates(config):
-    """Report version status once per session; the menu redraws often."""
-    if config.get("_update_checked"):
-        return
-    config["_update_checked"] = True
+def latest_release(config):
+    """Newer upstream release, cached for the session; ignores the skip pref."""
+    if "_latest" in config:
+        return config["_latest"]
 
-    url = config.get("UPDATE_URL") or ""
-    if not url:
+    config["_latest"] = None
+    if config.get("UPDATE_CHECK", True):
+        try:
+            config["_latest"] = updater.available(config)
+        except Exception:
+            config["_latest"] = None
+    return config["_latest"]
+
+
+def pending_update(config):
+    """Release the user should be told about (honours SKIPPED_VERSION)."""
+    info = latest_release(config)
+    if info and updater.should_notify(config, info):
+        return info
+    return None
+
+
+def _release_notes(info, limit=5):
+    """Pull readable changelog lines out of a release body."""
+    lines = []
+    for raw in (info.notes or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("---"):
+            continue
+        # Drop markdown headings and the badge/emoji noise that fronts them.
+        line = line.lstrip("#").strip()
+        line = re.sub(r"^[\W_]+", "", line)
+        if not line or len(line) < 4:
+            continue
+        lines.append(line)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def offer_update(config, info=None):
+    """Notify about a newer release and let the user update, stay, or skip."""
+    explicit = info is not None
+    info = info or latest_release(config)
+
+    print()
+    if info is None:
+        ui.notice(
+            f"you are on the latest version {ui.paint('v' + config_module.VERSION, ui.MUTED)}",
+            "ok",
+        )
         return
 
-    try:
-        response = requests.get(url, timeout=min(config["TIMEOUT"], 3))
-        body = response.text.strip()
-    except requests.RequestException as exc:
-        ui.notice(f"update check skipped ({type(exc).__name__})", "warn")
-        return
+    current = config_module.VERSION
+    ui.rule(
+        f"update available  v{current} {ui.paint(ui.GLYPH.arrow, ui.FAINT)} {ui.paint(info.label, ui.ACCENT)}"
+    )
 
-    if response.status_code != 200 or not body:
-        ui.notice("update check unavailable", "warn")
-        return
+    notes = _release_notes(info)
+    ui.key_value(
+        [
+            ("current", ui.paint("v" + current, ui.MUTED)),
+            ("latest", ui.paint(f"{info.label}  {ui.paint('(' + info.source + ')', ui.FAINT)}", ui.ACCENT)),
+            ("source", ui.paint(info.url, ui.INFO)),
+        ]
+    )
+    for line in notes:
+        print(f"  {ui.paint(ui.GLYPH.bullet, ui.FAINT)} {ui.paint(line[:88], ui.FAINT)}")
+    print()
 
-    if config_module.VERSION in body:
-        ui.notice("you are on the latest version", "ok")
-    elif body.lower().startswith("<") or "not found" in body.lower():
-        ui.notice("update check returned no data", "warn")
+    print(f"  {ui.paint('[1]', ui.ACCENT)} {ui.paint('update now', ui.MUTED)}")
+    print(f"  {ui.paint('[2]', ui.ACCENT)} {ui.paint('stay on v' + current, ui.MUTED)}")
+    print(f"  {ui.paint('[3]', ui.ACCENT)} {ui.paint('skip ' + info.label + ' - do not remind me again', ui.MUTED)}")
+    print()
+
+    answer = ui.prompt("choice", default="2")
+    if answer == "1":
+        apply_update(config, info)
+    elif answer == "3":
+        updater.skip_version(config, info.version)
+        config["_latest"] = None
+        ui.notice(f"{info.label} skipped - remove SKIPPED_VERSION from config.json to re-enable", "info")
+    elif answer == "2" or answer == "":
+        ui.notice(f"staying on v{current}", "info")
     else:
-        ui.notice(body.splitlines()[0][:80], "warn")
+        ui.notice("invalid option, staying on the current version", "warn")
+
+
+def apply_update(config, info):
+    print()
+    ui.rule("updating")
+    ui.notice("fetching from " + updater.repo_of(config), "info")
+    ok, message = updater.update(config, info)
+    if ok:
+        ui.notice(message, "ok")
+        ui.notice("restart Mephisto to use the new version", "warn")
+        config["_latest"] = None
+        config.pop("_update_checked", None)
+    else:
+        ui.notice(message, "error")
+        ui.notice("your current version was left untouched", "info")
 
 
 def ask_threads():
@@ -373,10 +456,23 @@ def main_menu():
         print(f"  {ui.paint('x', ui.DANGER)} failed to load exploit modules: {exc}")
         return 1
 
+    # One update check per launch; the notice appears under the banner.
+    first_round = True
+
     while True:
         os.system("cls" if os.name == "nt" else "clear")
-        check_updates(config)
         print_banner(config, specs)
+
+        if first_round:
+            info = pending_update(config)
+            if info:
+                ui.notice(
+                    f"update available {ui.paint('v' + config_module.VERSION, ui.FAINT)} -> "
+                    f"{ui.paint(info.label, ui.ACCENT)}   {ui.paint('[3] to review', ui.FAINT)}",
+                    "warn",
+                )
+            first_round = False
+
         print_menu(config, specs)
 
         choice = ui.prompt("choice")
@@ -391,6 +487,9 @@ def main_menu():
             list_exploits(specs)
             ui.pause()
         elif choice == "3":
+            offer_update(config)
+            ui.pause()
+        elif choice == "4":
             support_developer(config)
             ui.pause()
         elif choice == "":
