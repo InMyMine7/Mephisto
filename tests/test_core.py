@@ -397,6 +397,57 @@ class UpdaterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             updater._safe_extract(__import__("pathlib").Path(bundle), __import__("pathlib").Path(self.tmpdir.name) / "out")
 
+    def test_safe_extract_rejects_sibling_prefix_traversal(self):
+        """``/tmp/out-evil`` must not pass as being inside ``/tmp/out``."""
+        base = __import__("pathlib").Path(self.tmpdir.name)
+        destination = base / "out"
+        destination.mkdir()
+        bundle = base / "evil2.zip"
+        with zipfile.ZipFile(bundle, "w") as archive:
+            archive.writestr("../out-evil/pwned.txt", "nope")
+        with self.assertRaises(ValueError):
+            updater._safe_extract(bundle, destination)
+
+    def test_archive_source_finds_the_project_root(self):
+        base = __import__("pathlib").Path(self.tmpdir.name) / "tree"
+        nested = base / "Mephisto-0.2"
+        (nested / "mephisto").mkdir(parents=True)
+        (nested / "mephisto" / "config.py").write_text('VERSION = "0.2"\n', encoding="utf-8")
+        self.assertEqual(updater._archive_source(base), nested)
+
+    def test_archive_source_returns_none_for_unrelated_archives(self):
+        base = __import__("pathlib").Path(self.tmpdir.name) / "other"
+        base.mkdir()
+        (base / "readme.txt").write_text("hello\n", encoding="utf-8")
+        self.assertIsNone(updater._archive_source(base))
+
+    def test_update_reports_failure_without_raising(self):
+        info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+        with mock.patch.object(updater, "_update_git", return_value=(False, "nope")), \
+             mock.patch.object(updater, "_download_and_install", side_effect=OSError("disk full")):
+            ok, message = updater.update(self.config, info)
+        self.assertFalse(ok)
+        self.assertIn("update failed", message)
+
+    def test_update_without_a_newer_release_is_a_quiet_noop(self):
+        with mock.patch.object(updater, "available", return_value=None):
+            ok, message = updater.update(self.config, None)
+        self.assertFalse(ok)
+        self.assertEqual(message, "already up to date")
+
+    def test_git_update_falls_back_when_pull_cannot_fast_forward(self):
+        root = __import__("pathlib").Path(self.tmpdir.name)
+        (root / ".git").mkdir()
+        failed = mock.Mock(returncode=1, stderr="not possible to fast-forward")
+        info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+
+        with mock.patch.object(updater.shutil, "which", return_value="git"), \
+             mock.patch.object(updater, "_run_git", side_effect=[mock.Mock(returncode=0), failed]):
+            ok, message = updater._update_git(root, info, dry_run=False)
+
+        self.assertFalse(ok)
+        self.assertIn("fast-forward", message)
+
     def test_archive_update_preserves_config_and_results(self):
         root = __import__("pathlib").Path(self.tmpdir.name) / "install"
         (root / "mephisto").mkdir(parents=True)

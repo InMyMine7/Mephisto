@@ -215,33 +215,52 @@ def _installed_version(root: Path) -> str:
 
 
 def _update_git(root: Path, info: ReleaseInfo, dry_run: bool):
+    """Fast-forward the checkout; any failure falls back to the archive path."""
     if not (root / ".git").exists() or shutil.which("git") is None:
         return False, "not a git checkout"
 
-    fetch = _run_git(root, "fetch", "--tags", "--quiet")
+    try:
+        fetch = _run_git(root, "fetch", "--tags", "--quiet")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"git fetch failed ({type(exc).__name__})"
     if fetch.returncode != 0:
         return False, (fetch.stderr or "git fetch failed").strip()
 
-    if not dry_run:
-        pull = _run_git(root, "pull", "--ff-only", "--quiet")
-        if pull.returncode == 0:
-            installed = _installed_version(root)
-            if not installed or is_newer(installed, info.version) or parse_version(installed) == parse_version(info.version):
-                return True, f"updated to {installed or info.version} with git pull"
+    if dry_run:
+        return True, f"git fetch ok ({info.label})"
 
-        # A detached or diverged checkout cannot fast-forward: use the archive.
-        return False, "git pull did not fast-forward"
-    return True, f"git fetch ok ({info.label})"
+    try:
+        pull = _run_git(root, "pull", "--ff-only", "--quiet")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"git pull failed ({type(exc).__name__})"
+
+    if pull.returncode != 0:
+        # Detached or diverged checkout cannot fast-forward: use the archive.
+        return False, (pull.stderr or "git pull did not fast-forward").strip()
+
+    installed = _installed_version(root)
+    return True, f"updated to {installed or info.version} with git pull"
 
 
 def _safe_extract(archive: Path, destination: Path):
+    """Extract a zip, refusing entries that would land outside ``destination``."""
     with zipfile.ZipFile(archive) as bundle:
         target = destination.resolve()
         for member in bundle.infolist():
             resolved = (destination / member.filename).resolve()
-            if not str(resolved).startswith(str(target)):
+            if resolved != target and target not in resolved.parents:
                 raise ValueError(f"unsafe path in archive: {member.filename}")
         bundle.extractall(destination)
+
+
+def _archive_source(extracted: Path) -> Path | None:
+    """Locate the project root inside a GitHub tag archive."""
+    if (extracted / "mephisto" / "config.py").exists():
+        return extracted
+    for child in sorted(extracted.iterdir()):
+        if child.is_dir() and (child / "mephisto" / "config.py").exists():
+            return child
+    return None
 
 
 def _copy_tree(source: Path, root: Path):
@@ -263,20 +282,21 @@ def _copy_tree(source: Path, root: Path):
 def update(config, info: ReleaseInfo | None = None, dry_run: bool = False):
     """Install ``info`` (or the newest release) into the project directory.
 
-    Returns ``(ok, message)``. ``config.json`` and ``Result/`` are preserved.
+    Returns ``(ok, message)``. ``config.json`` and ``Result/`` are preserved,
+    and a failed update never leaves the checkout in a half-written state.
     """
-    from . import config as config_module
-
     root = project_root()
     info = info or available(config)
     if info is None:
         return False, "already up to date"
 
-    ok, message = _update_git(root, info, dry_run)
-    if ok:
-        return ok, message
-
-    return _download_and_install(config, info, root, dry_run)
+    try:
+        ok, message = _update_git(root, info, dry_run)
+        if ok:
+            return ok, message
+        return _download_and_install(config, info, root, dry_run)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return False, f"update failed ({type(exc).__name__}: {exc})"
 
 
 def _download_and_install(config, info: ReleaseInfo, root: Path, dry_run: bool):
@@ -301,8 +321,9 @@ def _download_and_install(config, info: ReleaseInfo, root: Path, dry_run: bool):
         except (zipfile.BadZipFile, ValueError) as exc:
             return False, f"cannot unpack archive ({exc})"
 
-        roots = [path for path in extracted.iterdir() if path.is_dir()]
-        source = roots[0] if len(roots) == 1 else extracted
+        source = _archive_source(extracted)
+        if source is None:
+            return False, "archive does not look like a Mephisto release"
         copied = _copy_tree(source, root)
 
     if not copied:
