@@ -336,6 +336,24 @@ def _download_and_install(config, info: ReleaseInfo, root: Path, dry_run: bool):
 # User preference
 # --------------------------------------------------------------------------- #
 
+SKIP_KEY = "skipped_version"
+
+
+def skipped_version(config) -> str:
+    """Version the user asked to stop being reminded about.
+
+    The preference lives in the machine-local state file. A legacy value in
+    ``config.json`` is migrated on first read so existing installs keep it.
+    """
+    from . import state
+
+    value = str(state.get(SKIP_KEY) or "").strip()
+    legacy = str(config.get("SKIPPED_VERSION") or "").strip()
+    if not value and legacy:
+        state.set(SKIP_KEY, legacy)
+        return legacy
+    return value
+
 
 def should_notify(config, info: ReleaseInfo | None, local_version: str | None = None) -> bool:
     """Respect a version the user asked to skip.
@@ -344,26 +362,33 @@ def should_notify(config, info: ReleaseInfo | None, local_version: str | None = 
     """
     if info is None:
         return False
-    skipped = str(config.get("SKIPPED_VERSION") or "").strip()
+    skipped = skipped_version(config)
     if not skipped:
         return True
     return is_newer(info.version, skipped)
 
 
 def skip_version(config, version: str):
-    from . import config as config_module
+    from . import state
 
-    config["SKIPPED_VERSION"] = version
-    try:
-        config_module.save(config)
-    except OSError:
-        pass
+    state.set(SKIP_KEY, str(version).strip())
+    # Drop the legacy key so the two stores cannot disagree.
+    if config.pop("SKIPPED_VERSION", None) is not None:
+        from . import config as config_module
+
+        try:
+            config_module.save(config)
+        except OSError:
+            pass
 
 
 def clear_skip(config):
-    from . import config as config_module
+    from . import state
 
+    state.clear(SKIP_KEY)
     if config.pop("SKIPPED_VERSION", None) is not None:
+        from . import config as config_module
+
         try:
             config_module.save(config)
         except OSError:

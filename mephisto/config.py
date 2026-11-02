@@ -34,7 +34,6 @@ DEFAULT_CONFIG = {
     "DISABLED_EXPLOITS": [],
     "UPDATE_REPO": "InMyMine7/Mephisto",
     "UPDATE_CHECK": True,
-    "SKIPPED_VERSION": "",
     "SUPPORT_URL": ["https://buymeacoffee.com/inmymine72"],
     "EMAIL": "default@example.com",
 }

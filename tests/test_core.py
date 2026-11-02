@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import requests
 
 from mephisto import config as config_module
-from mephisto import ui, updater
+from mephisto import state, ui, updater
 from mephisto.client import Exploit
 from mephisto.engine import ERROR, SUCCESS, TIMEOUT, run_target, run_targets
 from mephisto.registry import ExploitSpec, _cve_from_filename, discover, load_function
@@ -32,6 +32,23 @@ def make_config(tmpdir, **overrides):
     os.makedirs(config["FILES_DIR"], exist_ok=True)
     config.update(overrides)
     return config
+
+
+class _IsolatedState:
+    """Keep state tests from touching the real .mephisto-state.json."""
+
+    def __init__(self, root):
+        self.root = root
+        self._patch = None
+
+    def __enter__(self):
+        self._patch = mock.patch.object(config_module, "ROOT_DIR", self.root)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._patch.stop()
+        return False
 
 
 class RegistryTests(unittest.TestCase):
@@ -316,8 +333,11 @@ class UpdaterTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.config = make_config(self.tmpdir.name)
+        self._state = _IsolatedState(__import__("pathlib").Path(self.tmpdir.name))
+        self._state.__enter__()
 
     def tearDown(self):
+        self._state.__exit__(None, None, None)
         self.tmpdir.cleanup()
 
     def test_version_parsing_handles_prefixes_and_junk(self):
@@ -365,22 +385,39 @@ class UpdaterTests(unittest.TestCase):
 
     def test_skipping_a_version_silences_only_that_version(self):
         info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
-        self.assertTrue(updater.should_notify(self.config, None) is False)
+        self.assertFalse(updater.should_notify(self.config, None))
         self.assertTrue(updater.should_notify(self.config, info))
 
-        self.config["SKIPPED_VERSION"] = "0.2"
+        updater.skip_version(self.config, info.version)
         self.assertFalse(updater.should_notify(self.config, info))
 
         later = updater.ReleaseInfo(version="0.3", tag="v0.3", url="u", source="release")
         self.assertTrue(updater.should_notify(self.config, later))
 
-    def test_skip_preference_persists_through_config_save(self):
+    def test_skip_preference_lives_in_state_not_config(self):
         info = updater.ReleaseInfo(version="0.2", tag="v0.2", url="u", source="release")
+        updater.skip_version(self.config, info.version)
+
+        self.assertNotIn("SKIPPED_VERSION", self.config)
+        self.assertEqual(updater.skipped_version(self.config), "0.2")
+        self.assertEqual(state.load()[updater.SKIP_KEY], "0.2")
+
         path = os.path.join(self.tmpdir.name, "config.json")
         with mock.patch.object(config_module, "CONFIG_FILE", __import__("pathlib").Path(path)):
-            updater.skip_version(self.config, info.version)
+            updater.skip_version(config_module.load(), "0.3")
             reloaded = config_module.load()
-        self.assertEqual(reloaded["SKIPPED_VERSION"], "0.2")
+        self.assertNotIn("SKIPPED_VERSION", reloaded)
+
+    def test_legacy_skip_in_config_is_migrated(self):
+        self.config["SKIPPED_VERSION"] = "0.9"
+        self.assertEqual(updater.skipped_version(self.config), "0.9")
+        self.assertEqual(state.load()[updater.SKIP_KEY], "0.9")
+
+    def test_clear_skip_removes_the_preference(self):
+        updater.skip_version(self.config, "0.2")
+        self.assertTrue(updater.skipped_version(self.config))
+        updater.clear_skip(self.config)
+        self.assertEqual(updater.skipped_version(self.config), "")
 
     def test_private_session_keys_never_reach_config_json(self):
         path = os.path.join(self.tmpdir.name, "config.json")
@@ -485,6 +522,47 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue((root / "newfile.txt").exists())
         self.assertEqual((root / "config.json").read_text().strip(), '{"EMAIL": "keep@me"}')
         self.assertEqual((root / "Result" / "Shells.txt").read_text().strip(), "mine")
+
+
+class StateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self._state = _IsolatedState(__import__("pathlib").Path(self.tmpdir.name))
+        self._state.__enter__()
+
+    def tearDown(self):
+        self._state.__exit__(None, None, None)
+        self.tmpdir.cleanup()
+
+    def test_missing_file_reads_as_empty(self):
+        self.assertEqual(state.load(), {})
+        self.assertIsNone(state.get("nope"))
+
+    def test_values_round_trip(self):
+        state.set("k", "v")
+        self.assertEqual(state.get("k"), "v")
+        self.assertEqual(state.load(), {"k": "v"})
+
+    def test_corrupt_file_does_not_raise(self):
+        state.state_path().write_text("{not json", encoding="utf-8")
+        self.assertEqual(state.load(), {})
+        state.set("k", 1)
+        self.assertEqual(state.get("k"), 1)
+
+    def test_clear_only_removes_the_named_key(self):
+        state.set("a", 1)
+        state.set("b", 2)
+        state.clear("a")
+        self.assertEqual(state.load(), {"b": 2})
+
+    def test_clear_is_a_noop_when_key_is_absent(self):
+        state.set("a", 1)
+        state.clear("missing")
+        self.assertEqual(state.load(), {"a": 1})
+
+    def test_state_file_is_not_config_json(self):
+        self.assertEqual(state.state_path().name, ".mephisto-state.json")
+        self.assertNotEqual(state.state_path(), config_module.CONFIG_FILE)
 
 
 class ConfigTests(unittest.TestCase):

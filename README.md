@@ -398,11 +398,14 @@ Edit `config.json` to customize the tool's behavior:
     "DISABLED_EXPLOITS": [],                // CVE ids to skip during discovery
     "UPDATE_REPO": "InMyMine7/Mephisto",    // GitHub repo to check for updates
     "UPDATE_CHECK": true,                   // false disables the startup check
-    "SKIPPED_VERSION": "",                  // Version you asked not to be reminded about
     "SUPPORT_URL": ["https://..."],         // Support/donation links
     "EMAIL": "default@example.com"          // Default email for operations
 }
 ```
+
+The version you chose to skip is not stored here — it lives in
+`.mephisto-state.json`, a machine-local file that is gitignored so a skipped
+release never leaks into the repository.
 
 Paths are resolved against the project root, so the tool runs correctly no
 matter which directory you launch it from.
@@ -477,7 +480,7 @@ the banner at startup, and the menu shows `version v0.2 - v0.3 available`.
 |---|---|
 | **update now** | `git pull --ff-only` in a git checkout, otherwise downloads the release archive. `config.json` and `Result/` are never overwritten |
 | **stay** | Keeps the running version; you are asked again next launch |
-| **skip** | Stores the version in `SKIPPED_VERSION`; a strictly newer release still notifies |
+| **skip** | Remembers the version in `.mephisto-state.json`; a strictly newer release still notifies. Pick `[c]` to undo |
 
 Version discovery tries the GitHub release, then the newest semver tag, then the
 `VERSION` constant on the default branch — so it keeps working before the first
@@ -564,6 +567,7 @@ Mephisto/
 │   ├── config.py            # config.json loading and path resolution
 │   ├── registry.py          # Auto-discovers exploits/cve_*.py
 │   ├── results.py           # Result file tracking (artifact detection)
+│   ├── state.py             # Machine-local state (.mephisto-state.json)
 │   └── updater.py           # GitHub version check and self-update
 │
 ├── exploits/                # One file per CVE - auto-discovered

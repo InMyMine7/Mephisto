@@ -159,7 +159,7 @@ def latest_release(config):
 
 
 def pending_update(config):
-    """Release the user should be told about (honours SKIPPED_VERSION)."""
+    """Release the user should be told about (honours the skip preference)."""
     info = latest_release(config)
     if info and updater.should_notify(config, info):
         return info
@@ -186,23 +186,20 @@ def _release_notes(info, limit=5):
 
 def offer_update(config, info=None):
     """Notify about a newer release and let the user update, stay, or skip."""
-    explicit = info is not None
     info = info or latest_release(config)
+    skipped = updater.skipped_version(config)
+    current = config_module.VERSION
 
     print()
     if info is None:
-        ui.notice(
-            f"you are on the latest version {ui.paint('v' + config_module.VERSION, ui.MUTED)}",
-            "ok",
-        )
+        ui.notice(f"you are on the latest version {ui.paint('v' + current, ui.MUTED)}", "ok")
+        if skipped:
+            _offer_clear_skip(config, skipped)
         return
 
-    current = config_module.VERSION
     ui.rule(
         f"update available  v{current} {ui.paint(ui.GLYPH.arrow, ui.FAINT)} {ui.paint(info.label, ui.ACCENT)}"
     )
-
-    notes = _release_notes(info)
     ui.key_value(
         [
             ("current", ui.paint("v" + current, ui.MUTED)),
@@ -210,26 +207,43 @@ def offer_update(config, info=None):
             ("source", ui.paint(info.url, ui.INFO)),
         ]
     )
-    for line in notes:
+    for line in _release_notes(info):
         print(f"  {ui.paint(ui.GLYPH.bullet, ui.FAINT)} {ui.paint(line[:88], ui.FAINT)}")
     print()
 
     print(f"  {ui.paint('[1]', ui.ACCENT)} {ui.paint('update now', ui.MUTED)}")
     print(f"  {ui.paint('[2]', ui.ACCENT)} {ui.paint('stay on v' + current, ui.MUTED)}")
     print(f"  {ui.paint('[3]', ui.ACCENT)} {ui.paint('skip ' + info.label + ' - do not remind me again', ui.MUTED)}")
+    show_clear = bool(skipped) and not updater.is_newer(info.version, skipped)
+    if show_clear:
+        print(f"  {ui.paint('[c]', ui.ACCENT)} {ui.paint('clear the skip of v' + skipped, ui.MUTED)}")
     print()
 
-    answer = ui.prompt("choice", default="2")
+    answer = ui.prompt("choice", default="2").lower()
     if answer == "1":
         apply_update(config, info)
     elif answer == "3":
         updater.skip_version(config, info.version)
         config["_latest"] = None
-        ui.notice(f"{info.label} skipped - remove SKIPPED_VERSION from config.json to re-enable", "info")
-    elif answer == "2" or answer == "":
+        ui.notice(f"{info.label} skipped - choose [c] later to re-enable", "info")
+    elif answer in ("c", "clear") and show_clear:
+        updater.clear_skip(config)
+        config["_latest"] = None
+        ui.notice("skip preference cleared", "ok")
+    elif answer in ("2", ""):
         ui.notice(f"staying on v{current}", "info")
     else:
         ui.notice("invalid option, staying on the current version", "warn")
+
+
+def _offer_clear_skip(config, skipped):
+    """Nothing to install, but the user may want to undo an old skip."""
+    ui.notice(f"v{skipped} is currently skipped", "info")
+    if ui.prompt("clear it? (y/N)", default="N").lower() in ("y", "yes"):
+        updater.clear_skip(config)
+        ui.notice("skip preference cleared", "ok")
+    else:
+        ui.notice("skip kept", "info")
 
 
 def apply_update(config, info):
